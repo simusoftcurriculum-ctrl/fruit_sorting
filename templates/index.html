@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>Fresh & Rotten Fruit Detector</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600;700&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+
+<body>
+  <header>
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">🍎</span>
+        <span class="logo-text">FreshScan</span>
+      </div>
+      <p class="tagline">Upload, paste URL, or detect fresh/rotten fruits live from camera.</p>
+    </div>
+  </header>
+
+  <main>
+    <section class="upload-section" id="uploadSection">
+
+      <div class="upload-zone" id="dropZone">
+        <input type="file" id="fileInput" accept="image/*" hidden />
+
+        <div class="drop-icon">
+          <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+            <rect width="40" height="40" rx="12" fill="#e8f5e9"/>
+            <path d="M20 12v16M13 19l7-7 7 7" stroke="#2e7d32" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M12 28h16" stroke="#2e7d32" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
+        </div>
+
+        <p class="drop-primary">Drag & drop your fruit image here</p>
+        <p class="drop-sub">
+          or
+          <button class="link-btn" onclick="document.getElementById('fileInput').click()">
+            browse files
+          </button>
+        </p>
+        <p class="drop-formats">JPG, PNG, WEBP — up to 10 MB</p>
+      </div>
+
+      <div class="url-row">
+        <input type="text" id="urlInput" placeholder="Or paste an image URL…" />
+        <button class="btn-secondary" id="urlBtn">Analyse URL</button>
+      </div>
+
+      <div class="camera-section">
+        <button class="btn-secondary" id="enableSpeechBtn">
+          Enable Speech
+        </button>
+
+        <button class="btn-secondary" id="startCameraBtn">
+          Start Live Camera Detection
+        </button>
+
+        <button class="btn-secondary" id="stopCameraBtn" style="display:none;">
+          Stop Camera
+        </button>
+
+        <video id="cameraVideo" autoplay playsinline muted></video>
+        <canvas id="cameraCanvas" style="display:none;"></canvas>
+
+        <p class="camera-note">
+          First click Enable Speech, then upload or start camera.
+        </p>
+      </div>
+
+      <div class="classes-strip">
+        <span class="classes-label">Detects:</span>
+        <span class="class-chip">Fresh Apple</span>
+        <span class="class-chip">Rotten Apple</span>
+        <span class="class-chip">Fresh Banana</span>
+        <span class="class-chip">Rotten Banana</span>
+        <span class="class-chip">Fresh Orange</span>
+        <span class="class-chip">Rotten Orange</span>
+      </div>
+    </section>
+
+    <div class="loading-row" id="loadingRow" style="display:none;">
+      <div class="loading-spinner"></div>
+      <p class="loading-text">Analysing…</p>
+    </div>
+
+    <div class="error-box" id="errorBox" style="display:none;"></div>
+
+    <section class="results-section" id="resultsSection" style="display:none;">
+      <div class="results-grid">
+
+        <div class="preview-card">
+          <img id="previewImg" src="" alt="Detected fruit" />
+
+          <div class="verdict">
+            <span class="verdict-label" id="verdictLabel">–</span>
+            <span class="verdict-conf" id="verdictConf">–</span>
+          </div>
+        </div>
+
+        <div class="bars-card">
+          <h2 class="bars-title">Confidence Breakdown</h2>
+          <div id="barsList" class="bars-list"></div>
+
+          <div class="properties-card">
+            <h2 class="properties-title">Fruit Freshness Details</h2>
+
+            <div class="property-item">
+              <span class="property-label">✅ Status</span>
+              <span class="property-value" id="fruitStatus">-</span>
+            </div>
+
+            <div class="property-item">
+              <span class="property-label">🍽 Edibility</span>
+              <span class="property-value" id="fruitEdibility">-</span>
+            </div>
+
+            <div class="property-item">
+              <span class="property-label">⚠️ Advice</span>
+              <span class="property-value" id="fruitAdvice">-</span>
+            </div>
+
+            <div class="property-item">
+              <span class="property-label">📦 Storage Tip</span>
+              <span class="property-value" id="fruitStorage">-</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <button class="btn-reset" id="resetBtn">Try another image</button>
+    </section>
+  </main>
+
+  <footer>
+    <p>Powered by MobileNetV2 · Detects Fresh and Rotten Fruits</p>
+  </footer>
+
+<script>
+let speechEnabled = false;
+let lastSpokenLabel = "";
+
+const dropZone = document.getElementById("dropZone");
+const fileInput = document.getElementById("fileInput");
+const urlInput = document.getElementById("urlInput");
+const urlBtn = document.getElementById("urlBtn");
+const loadingRow = document.getElementById("loadingRow");
+const errorBox = document.getElementById("errorBox");
+const resultsSection = document.getElementById("resultsSection");
+const resetBtn = document.getElementById("resetBtn");
+
+const enableSpeechBtn = document.getElementById("enableSpeechBtn");
+const startCameraBtn = document.getElementById("startCameraBtn");
+const stopCameraBtn = document.getElementById("stopCameraBtn");
+const cameraVideo = document.getElementById("cameraVideo");
+const cameraCanvas = document.getElementById("cameraCanvas");
+
+const PALETTE = [
+  "#2e7d32",
+  "#388e3c",
+  "#43a047",
+  "#66bb6a",
+  "#81c784",
+  "#a5d6a7",
+  "#c8e6c9",
+  "#e8f5e9"
+];
+
+let cameraStream = null;
+let liveTimer = null;
+let isPredicting = false;
+
+enableSpeechBtn.addEventListener("click", () => {
+  speechEnabled = true;
+
+  const test = new SpeechSynthesisUtterance("Speech enabled");
+  test.lang = "en-US";
+  test.volume = 1;
+  test.rate = 0.9;
+  test.pitch = 1;
+
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(test);
+
+  enableSpeechBtn.textContent = "Speech Enabled";
+});
+
+function speakResult(text) {
+  if (!speechEnabled) return;
+
+  if (!("speechSynthesis" in window)) {
+    alert("Speech is not supported in this browser.");
+    return;
+  }
+
+  window.speechSynthesis.cancel();
+
+  const msg = new SpeechSynthesisUtterance(text);
+  msg.lang = "en-US";
+  msg.volume = 1;
+  msg.rate = 0.9;
+  msg.pitch = 1;
+
+  setTimeout(() => {
+    window.speechSynthesis.speak(msg);
+  }, 200);
+}
+
+dropZone.addEventListener("dragover", e => {
+  e.preventDefault();
+  dropZone.classList.add("drag-over");
+});
+
+dropZone.addEventListener("dragleave", () => {
+  dropZone.classList.remove("drag-over");
+});
+
+dropZone.addEventListener("drop", e => {
+  e.preventDefault();
+  dropZone.classList.remove("drag-over");
+
+  if (e.dataTransfer.files[0]) {
+    submitFile(e.dataTransfer.files[0]);
+  }
+});
+
+fileInput.addEventListener("change", () => {
+  if (fileInput.files[0]) {
+    submitFile(fileInput.files[0]);
+  }
+});
+
+urlBtn.addEventListener("click", () => {
+  const url = urlInput.value.trim();
+
+  if (url) {
+    submitURL(url);
+  }
+});
+
+urlInput.addEventListener("keydown", e => {
+  if (e.key === "Enter") {
+    const url = urlInput.value.trim();
+
+    if (url) {
+      submitURL(url);
+    }
+  }
+});
+
+resetBtn.addEventListener("click", resetUI);
+startCameraBtn.addEventListener("click", startLiveCamera);
+stopCameraBtn.addEventListener("click", stopLiveCamera);
+
+async function submitFile(file) {
+  showLoading();
+
+  const fd = new FormData();
+  fd.append("image", file);
+
+  try {
+    const res = await fetch("/predict", {
+      method: "POST",
+      body: fd
+    });
+
+    const data = await res.json();
+
+    if (data.error) {
+      throw new Error(data.error);
+    }
+
+    showResults(data);
+
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+async function submitURL(url) {
+  showLoading();
+
+  try {
+    const res = await fetch("/predict_url", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ url })
+    });
+
+    const data = await res.json();
+
+    if (data.error) {
+      throw new Error(data.error);
+    }
+
+    showResults(data);
+
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+async function startLiveCamera() {
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: false
+    });
+
+    cameraVideo.srcObject = cameraStream;
+    cameraVideo.style.display = "block";
+
+    startCameraBtn.style.display = "none";
+    stopCameraBtn.style.display = "inline-block";
+
+    liveTimer = setInterval(detectFromCamera, 1500);
+
+  } catch (err) {
+    showError("Camera not available or permission denied.");
+  }
+}
+
+function stopLiveCamera() {
+  if (liveTimer) {
+    clearInterval(liveTimer);
+    liveTimer = null;
+  }
+
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(track => track.stop());
+    cameraStream = null;
+  }
+
+  cameraVideo.style.display = "none";
+  startCameraBtn.style.display = "inline-block";
+  stopCameraBtn.style.display = "none";
+  isPredicting = false;
+}
+
+function detectFromCamera() {
+  if (isPredicting) return;
+  if (!cameraVideo.videoWidth || !cameraVideo.videoHeight) return;
+
+  isPredicting = true;
+
+  cameraCanvas.width = cameraVideo.videoWidth;
+  cameraCanvas.height = cameraVideo.videoHeight;
+
+  const ctx = cameraCanvas.getContext("2d");
+  ctx.drawImage(cameraVideo, 0, 0, cameraCanvas.width, cameraCanvas.height);
+
+  cameraCanvas.toBlob(async blob => {
+    const fd = new FormData();
+    fd.append("image", blob, "live_camera.jpg");
+
+    try {
+      const res = await fetch("/predict", {
+        method: "POST",
+        body: fd
+      });
+
+      const data = await res.json();
+
+      if (!data.error) {
+        showResults(data);
+      }
+
+    } catch (err) {
+      console.log("Live camera error:", err.message);
+    }
+
+    isPredicting = false;
+  }, "image/jpeg", 0.8);
+}
+
+function showLoading() {
+  errorBox.style.display = "none";
+  resultsSection.style.display = "none";
+  loadingRow.style.display = "flex";
+}
+
+function showError(msg) {
+  loadingRow.style.display = "none";
+  errorBox.textContent = "Error: " + msg;
+  errorBox.style.display = "block";
+}
+
+function showResults(data) {
+  loadingRow.style.display = "none";
+
+  document.getElementById("previewImg").src = data.thumbnail;
+
+  document.getElementById("verdictLabel").textContent =
+    data.top_label.charAt(0).toUpperCase() + data.top_label.slice(1);
+
+  document.getElementById("verdictConf").textContent =
+    data.top_confidence.toFixed(1) + "% confident";
+
+  const list = document.getElementById("barsList");
+  list.innerHTML = "";
+
+  data.predictions.forEach((p, i) => {
+    const pct = p.confidence.toFixed(1);
+
+    const row = document.createElement("div");
+    row.className = "bar-row";
+
+    row.innerHTML = `
+      <span class="bar-label">${p.label}</span>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:0%;background:${PALETTE[i % PALETTE.length]}" data-pct="${pct}"></div>
+      </div>
+      <span class="bar-pct">${pct}%</span>
+    `;
+
+    list.appendChild(row);
+  });
+
+  if (data.properties) {
+    document.getElementById("fruitStatus").textContent = data.properties.status;
+    document.getElementById("fruitEdibility").textContent = data.properties.edibility;
+    document.getElementById("fruitAdvice").textContent = data.properties.advice;
+    document.getElementById("fruitStorage").textContent = data.properties.storage;
+  }
+
+  resultsSection.style.display = "block";
+
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    document.querySelectorAll(".bar-fill").forEach(el => {
+      el.style.width = el.dataset.pct + "%";
+    });
+  }));
+
+  let speechText = "";
+
+  if (data.properties) {
+    speechText =
+      data.properties.status + ". " +
+      data.properties.edibility + ". " +
+      data.properties.advice;
+  } else {
+    speechText = data.top_label + " detected.";
+  }
+
+ // Only speak if it's a valid fruit (not background/unknown)
+const validFruits = [
+  "freshapples",
+  "freshbanana",
+  "freshoranges",
+  "freshmangoes",
+  "rottenapples",
+  "rottenbanana",
+  "rottenoranges",
+  "rottenmangoes"
+];
+
+// Add confidence check (optional but recommended)
+const MIN_CONFIDENCE = 85;
+
+if (
+  validFruits.includes(data.top_label.toLowerCase()) &&
+  data.top_confidence >= MIN_CONFIDENCE &&
+  data.top_label !== lastSpokenLabel
+) {
+  speakResult(speechText);
+  lastSpokenLabel = data.top_label;
+} else {
+  // Stay silent
+  window.speechSynthesis.cancel();
+}
+}
+
+function resetUI() {
+  resultsSection.style.display = "none";
+  errorBox.style.display = "none";
+  fileInput.value = "";
+  urlInput.value = "";
+  lastSpokenLabel = "";
+  window.speechSynthesis.cancel();
+}
+</script>
+</body>
+</html>
